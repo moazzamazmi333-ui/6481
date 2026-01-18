@@ -10,8 +10,7 @@
   #mainCard { width: 100%; background: #fff; padding: 12px 0; box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 20; border-bottom: 1px solid #eee; }
   .container { width: 92%; margin: 0 auto; }
   .top-row { display: flex; gap: 12px; align-items: center; border-bottom: 1px solid #f1f5f9; padding-bottom: 10px; margin-bottom: 10px; }
-  #driverPhoto { width: 55px; height: 55px; border-radius: 12px; object-fit: cover; border: 2px solid #eee; cursor: zoom-in; transition: 0.3s; }
-  #driverPhoto:hover { border-color: var(--primary); }
+  #driverPhoto { width: 55px; height: 55px; border-radius: 12px; object-fit: cover; border: 2px solid #eee; }
   .driver-meta { flex: 1; }
   #driverName { font-weight: 800; font-size: 15px; color: var(--dark); display: block; }
   #driverCar { font-size: 12px; color: #64748b; font-weight: 600; }
@@ -26,20 +25,14 @@
   .map-controls { position: absolute; left: 10px; bottom: 30px; display: flex; flex-direction: column; gap: 10px; z-index: 100; }
   .map-controls button { width: 45px; height: 45px; border-radius: 12px; border: none; background: #fff; box-shadow: 0 4px 10px rgba(0,0,0,0.2); cursor: pointer; font-size: 18px; display: flex; align-items: center; justify-content: center; }
   #btnVehicle { background: var(--primary); color: white; }
-  #photoModal { display: none; position: fixed; z-index: 1000; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); align-items: center; justify-content: center; backdrop-filter: blur(5px); }
-  #zoomedImg { max-width: 90%; max-height: 70%; border-radius: 15px; border: 3px solid white; box-shadow: 0 0 30px rgba(0,0,0,0.5); }
 </style>
 </head>
 <body>
 
-<div id="photoModal" onclick="closeModal()">
-  <img id="zoomedImg" src="">
-</div>
-
 <div id="mainCard">
   <div class="container">
     <div class="top-row">
-      <img id="driverPhoto" src="" onclick="openModal(this.src)" alt="Driver">
+      <img id="driverPhoto" src="" alt="Driver">
       <div class="driver-meta">
         <span id="driverName">Connecting...</span>
         <span id="driverCar">Vehicle: --</span>
@@ -57,7 +50,7 @@
       <div class="stat-item"><small>Status</small><b id="ignition">OFF</b></div>
     </div>
 
-    <div id="driverAddress">📍 Loading live data...</div>
+    <div id="driverAddress">📍 Checking GPS Signal...</div>
   </div>
 </div>
 
@@ -74,215 +67,135 @@
 const API_KEY = "AIzaSyB8fFUPeGfUy8Wwh-mQ_d3fbGZzKBy7VwM";
 const GPS_API = "https://gps51-proxy.moazzamazmi333.workers.dev/";
 const SHEET_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTltU6LSbArrr2O_xNGwpGPVlGyjo7i3bL4cN0KgdGGkJijj1l0z1NR6P2mhn02rWDeyqdQha4OoEQc/pub?gid=587843648&single=true&output=csv";
-
 const CAR_ICON_URL = "https://static.wixstatic.com/media/843689_497878e241e348adbd167a8cc7462f1b~mv2.png";
-const CAR_ICON_SIZE = 50;
-const ICON_STRAIGHT_DEG = 0;
-const HEADING_FREEZE_SPEED = 5; 
-const TRAIL_MAX_POINTS = 120;
-const TRAIL_MIN_MOVE_METERS = 8;
 
-let map, userMarker, trafficLayer, directionsService, directionsRenderer, geocoder;
+let map, userMarker, directionsService, directionsRenderer, geocoder;
 let clat, clng, ulat, ulng, DEVICE_ID, followVehicle = true, prevPos = null;
-let carOverlay=null;
-let trailLine=null;
-let trailPath=[];
-let lastStableHeading = 0;
+let carOverlay = null, lastStableHeading = 0;
 
-function openModal(src){ if(!src) return; document.getElementById("zoomedImg").src=src; document.getElementById("photoModal").style.display="flex"; }
-function closeModal(){ document.getElementById("photoModal").style.display="none"; }
 function setStatus(msg){ document.getElementById("driverAddress").innerText="📍 "+msg; }
 
-window.addEventListener("message",(event)=>{
-  if(!event.data) return;
-  if(event.data.type==="USER_LOCATION"){
-    ulat=event.data.lat; ulng=event.data.lng;
-    const userPos={lat:ulat,lng:ulng};
-    if(!userMarker){
-      userMarker=new google.maps.Marker({
-        map, position:userPos,
-        icon:{path:google.maps.SymbolPath.CIRCLE, scale:6, fillColor:"#2563eb", strokeColor:"white", strokeWeight:2}
-      });
-    }else userMarker.setPosition(userPos);
-    calculateRouteUserToCar();
+// ✅ Fixed: Auto Get User Location for GitHub Site
+function getUserLocation() {
+  if (navigator.geolocation) {
+    navigator.geolocation.watchPosition((pos) => {
+      ulat = pos.coords.latitude;
+      ulng = pos.coords.longitude;
+      const userPos = {lat: ulat, lng: ulng};
+      if (!userMarker) {
+        userMarker = new google.maps.Marker({
+          map, position: userPos,
+          icon: {path: google.maps.SymbolPath.CIRCLE, scale: 7, fillColor: "#2563eb", strokeColor: "white", strokeWeight: 2}
+        });
+      } else userMarker.setPosition(userPos);
+      calculateRoute();
+    }, () => setStatus("Please enable location for ETA"), {enableHighAccuracy: true});
   }
-});
-
-function loadGoogleMaps(){
-  return new Promise((resolve,reject)=>{
-    const s=document.createElement("script");
-    s.src=`https://maps.googleapis.com/maps/api/js?key=${API_KEY}&libraries=geometry,places`;
-    s.async=true; s.defer=true;
-    s.onload=resolve;
-    s.onerror=()=>reject("Google Maps blocked");
-    document.head.appendChild(s);
-  });
 }
 
 async function start(){
-  try{ await loadGoogleMaps(); initMap(); }
-  catch(e){ setStatus(e); }
-}
-
-function normalizeAngle(a){ a=((a+180)%360)-180; return a; }
-
-function createCarOverlay(){
-  function CarOverlay(position){
-    this.position=position; this.div=null; this.img=null;
-    this.animTimer=null; this.animPos=position; this.animHeading=0;
-  }
-  CarOverlay.prototype=new google.maps.OverlayView();
-  CarOverlay.prototype.onAdd=function(){
-    const div=document.createElement("div");
-    div.style.position="absolute";
-    div.style.width=CAR_ICON_SIZE+"px"; div.style.height=CAR_ICON_SIZE+"px";
-    div.style.pointerEvents="none"; div.style.zIndex="99999";
-    const img=document.createElement("img");
-    img.src=CAR_ICON_URL;
-    img.style.width="100%"; img.style.height="100%";
-    img.style.transformOrigin="50% 50%";
-    div.appendChild(img);
-    this.div=div; this.img=img;
-    this.getPanes().overlayLayer.appendChild(div);
-  };
-  CarOverlay.prototype.draw=function(){
-    if(!this.div) return;
-    const proj=this.getProjection();
-    const point=proj.fromLatLngToDivPixel(this.animPos||this.position);
-    if(!point) return;
-    this.div.style.left=(point.x - CAR_ICON_SIZE/2)+"px";
-    this.div.style.top =(point.y - CAR_ICON_SIZE/2)+"px";
-    if(this.img){
-      const rot = this.animHeading + ICON_STRAIGHT_DEG;
-      this.img.style.transform = `rotate(${rot}deg)`;
-    }
-  };
-  function lerp(a,b,t){ return a+(b-a)*t; }
-  CarOverlay.prototype.setSmooth=function(newPos, newHeading){
-    const startPos=this.animPos||this.position;
-    const startHeading=this.animHeading||0;
-    let dh=normalizeAngle(newHeading-startHeading);
-    const endHeading=startHeading+dh;
-    const steps=20;
-    const duration=600; // ✅ Faster animation for better response
-    const stepTime=Math.floor(duration/steps);
-    let step=0;
-    if(this.animTimer) clearInterval(this.animTimer);
-    this.animTimer=setInterval(()=>{
-      step++; const t=step/steps;
-      const lat=lerp(startPos.lat(), newPos.lat(), t);
-      const lng=lerp(startPos.lng(), newPos.lng(), t);
-      this.animPos=new google.maps.LatLng(lat,lng);
-      this.animHeading=lerp(startHeading, endHeading, t);
-      this.draw();
-      if(step>=steps){
-        clearInterval(this.animTimer);
-        this.animTimer=null; this.animPos=newPos; this.animHeading=newHeading; this.draw();
-      }
-    }, stepTime);
-  };
-  return CarOverlay;
+  const s = document.createElement("script");
+  s.src = `https://maps.googleapis.com/maps/api/js?key=${API_KEY}&libraries=geometry`;
+  s.onload = initMap;
+  document.head.appendChild(s);
 }
 
 function initMap(){
-  map=new google.maps.Map(document.getElementById("map"),{
-    center:{lat:26.85,lng:80.95}, zoom:15, fullscreenControl:true,
-    styles: [
-      { elementType: "geometry", stylers: [{ color: "#f5f5f5" }] },
-      { elementType: "labels.icon", stylers: [{ visibility: "off" }] },
-      { featureType: "road", elementType: "geometry", stylers: [{ color: "#ffffff" }] },
-      { featureType: "water", elementType: "geometry", stylers: [{ color: "#c9c9c9" }] }
-    ]
+  map = new google.maps.Map(document.getElementById("map"),{
+    center: {lat: 26.85, lng: 80.95}, zoom: 15, disableDefaultUI: true
   });
-  trafficLayer=new google.maps.TrafficLayer();
-  geocoder=new google.maps.Geocoder();
-  directionsService=new google.maps.DirectionsService();
-  directionsRenderer=new google.maps.DirectionsRenderer({
-    map, suppressMarkers:true, preserveViewport:true,
-    polylineOptions:{ strokeColor:"#2563eb", strokeWeight:6 }
+  geocoder = new google.maps.Geocoder();
+  directionsService = new google.maps.DirectionsService();
+  directionsRenderer = new google.maps.DirectionsRenderer({
+    map, suppressMarkers: true, polylineOptions: {strokeColor: "#2563eb", strokeWeight: 6}
   });
-  trailLine=new google.maps.Polyline({
-    map, path:trailPath, geodesic:true, strokeColor:"#22c55e", strokeOpacity:0.9, strokeWeight:5
-  });
-  const CarOverlay=createCarOverlay();
-  carOverlay=new CarOverlay(new google.maps.LatLng(26.85,80.95));
+  
+  const CarOverlay = createCarOverlay();
+  carOverlay = new CarOverlay(new google.maps.LatLng(26.85, 80.95));
   carOverlay.setMap(map);
+  
+  getUserLocation();
   loadSheet();
+}
+
+// Overlay function kept same for rotation
+function createCarOverlay(){
+  function CarOverlay(pos){ this.pos = pos; this.animPos = pos; }
+  CarOverlay.prototype = new google.maps.OverlayView();
+  CarOverlay.prototype.onAdd = function(){
+    this.div = document.createElement("div");
+    this.div.style.position = "absolute";
+    this.div.innerHTML = `<img id="carImg" src="${CAR_ICON_URL}" style="width:60px; height:60px; transition: 0.5s;">`;
+    this.getPanes().overlayLayer.appendChild(this.div);
+  };
+  CarOverlay.prototype.draw = function(){
+    const point = this.getProjection().fromLatLngToDivPixel(this.animPos);
+    this.div.style.left = (point.x - 30) + 'px';
+    this.div.style.top = (point.y - 30) + 'px';
+  };
+  CarOverlay.prototype.update = function(pos, head){
+    this.animPos = pos;
+    if(document.getElementById("carImg")) document.getElementById("carImg").style.transform = `rotate(${head}deg)`;
+    this.draw();
+  };
+  return CarOverlay;
 }
 
 async function loadVehicle(){
   if(!DEVICE_ID) return;
   try{
-    // ✅ Fast Fetch with Timestamp to prevent cache
-    const r=await fetch(GPS_API + "?t=" + Date.now(), {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body:JSON.stringify({ deviceids:[DEVICE_ID] })
+    const r = await fetch(GPS_API + "?t=" + Date.now(), {
+      method:"POST", body:JSON.stringify({ deviceids:[DEVICE_ID] })
     });
-    const j=await r.json();
-    const v=j.records?.[0];
+    const j = await r.json();
+    const v = j.records?.[0];
     if(!v) return;
 
-    const nLat=parseFloat(v.callat);
-    const nLng=parseFloat(v.callon);
-    const speed=Math.floor((Number(v.speed)||0)/1000);
-    const carPos=new google.maps.LatLng(nLat,nLng);
+    clat = parseFloat(v.callat); clng = parseFloat(v.callon);
+    const speed = Math.floor((v.speed||0)/1000);
+    const head = Number(v.course)||0;
+    const carPos = new google.maps.LatLng(clat, clng);
 
-    let heading=Number(v.course)||0;
-    if(prevPos && speed>1){
-      heading=google.maps.geometry.spherical.computeHeading(prevPos,carPos);
-    }
-    if(speed < HEADING_FREEZE_SPEED) heading = lastStableHeading;
-    else lastStableHeading = heading;
-
-    if(carOverlay) carOverlay.setSmooth(carPos, heading);
-    prevPos=carPos; clat=nLat; clng=nLng;
-
+    if(carOverlay) carOverlay.update(carPos, head);
     if(followVehicle) map.panTo(carPos);
-    document.getElementById("speed").innerText=speed+" km/h";
-    document.getElementById("ignition").innerText=speed>0 ? "MOVING":"IDLE";
 
-    // Address Update
-    geocoder.geocode({ location: carPos }, (res, stat)=>{
-      if(stat==="OK" && res[0]) setStatus(res[0].formatted_address);
+    document.getElementById("speed").innerText = speed + " km/h";
+    document.getElementById("ignition").innerText = speed > 0 ? "MOVING" : "IDLE";
+    
+    geocoder.geocode({location: carPos}, (res, stat) => {
+      if(stat === "OK") setStatus(res[0].formatted_address);
     });
-    calculateRouteUserToCar();
-  }catch(e){ console.log("Fetch Error"); }
+    calculateRoute();
+  }catch(e){}
 }
 
-function calculateRouteUserToCar(){
+function calculateRoute(){
   if(!ulat || !clat) return;
   directionsService.route({
-    origin:{lat:ulat,lng:ulng}, destination:{lat:clat,lng:clng}, travelMode:"DRIVING"
-  }, (result,status)=>{
-    if(status==="OK"){
-      directionsRenderer.setDirections(result);
-      const leg=result.routes[0].legs[0];
-      document.getElementById("dist").innerText=leg.distance.text;
-      document.getElementById("eta").innerText=leg.duration.text;
+    origin: {lat: ulat, lng: ulng}, destination: {lat: clat, lng: clng}, travelMode: 'DRIVING'
+  }, (res, stat) => {
+    if(stat === 'OK'){
+      directionsRenderer.setDirections(res);
+      document.getElementById("dist").innerText = res.routes[0].legs[0].distance.text;
+      document.getElementById("eta").innerText = res.routes[0].legs[0].duration.text;
     }
   });
 }
 
 function loadSheet(){
   fetch(SHEET_CSV + "&t=" + Date.now()).then(r=>r.text()).then(csv=>{
-    const lines=csv.trim().split("\n");
-    if(lines.length<2) return;
-    const row=lines[1].split(",");
-    DEVICE_ID=row[0].trim();
-    document.getElementById("driverName").innerText=row[1]||"Driver";
-    document.getElementById("driverCar").innerText="Vehicle: "+(row[3]||"N/A");
-    document.getElementById("driverMobile").href="tel:"+(row[2]||"");
-    document.getElementById("driverPhoto").src=row[4]||"";
-    loadVehicle();
-    // ✅ Faster interval: 2.5 seconds
-    setInterval(loadVehicle, 2500); 
+    const d = csv.split("\n")[1].split(",");
+    DEVICE_ID = d[0].trim();
+    document.getElementById("driverName").innerText = d[1];
+    document.getElementById("driverCar").innerText = "Vehicle: " + d[3];
+    document.getElementById("driverMobile").href = "tel:" + d[2];
+    document.getElementById("driverPhoto").src = d[4];
+    setInterval(loadVehicle, 3000);
   });
 }
 
-document.getElementById("btnTraffic").onclick=()=>trafficLayer.setMap(trafficLayer.getMap()?null:map);
-document.getElementById("btnVehicle").onclick=()=>{ followVehicle=true; if(clat) map.panTo({lat:clat,lng:clng}); };
-document.getElementById("btnMe").onclick=()=>{ followVehicle=false; if(ulat) map.panTo({lat:ulat,lng:ulng}); };
+document.getElementById("btnMe").onclick=()=> { followVehicle=false; map.panTo({lat:ulat, lng:ulng}); };
+document.getElementById("btnVehicle").onclick=()=> { followVehicle=true; map.panTo({lat:clat, lng:clng}); };
 
 start();
 </script>
